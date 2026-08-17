@@ -1,0 +1,58 @@
+{
+  "title": "TaskFlow — System Overview",
+  "uid": "taskflow-overview",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Java backend request rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(http_server_requests_seconds_count{job=\"java-backend\"}[1m])) by (status)" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Java backend p99 latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{job=\"java-backend\"}[5m])) by (le))" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "AI service — events processed / DLQ / duplicates",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "rate(ai_events_processed_total[1m])", "legendFormat": "processed" },
+        { "expr": "rate(ai_events_dlq_total[1m])", "legendFormat": "dead-lettered" },
+        { "expr": "rate(ai_events_skipped_duplicate_total[1m])", "legendFormat": "duplicate (idempotent skip)" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Kafka consumer lag — ai-priority-service",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "sum(kafka_consumergroup_lag{consumergroup=\"ai-priority-service\"}) by (topic)" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "HikariCP connection pool utilization",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "hikaricp_connections_active{job=\"java-backend\"} / hikaricp_connections_max{job=\"java-backend\"}" }
+      ]
+    }
+  ]
+}

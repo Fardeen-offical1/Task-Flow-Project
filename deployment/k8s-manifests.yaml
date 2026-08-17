@@ -1,0 +1,270 @@
+# ==========================================================
+# Kubernetes manifests. Still condensed into one file for
+# readability here — split into deployment.yaml, service.yaml,
+# hpa.yaml, configmap.yaml, secret.yaml per component in a real
+# repo — but this version adds what was missing before: Services
+# for both app tiers (nothing could route to the Deployments
+# without one), a Secret/ConfigMap instead of relying on baked-in
+# env vars, and manifests for the backing Postgres/Redis/Kafka
+# instead of assuming they exist somewhere unmentioned.
+#
+# Postgres/Kafka here are single-replica, PVC-backed manifests
+# suitable for a course project / demo cluster. For an actual
+# production rollout, replace them with a managed Postgres (RDS/
+# Cloud SQL) and a managed or Strimzi-operated Kafka — running
+# stateful single-node Postgres/Kafka by hand in k8s is what this
+# is, a simplification, not a production pattern.
+# ==========================================================
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: taskflow-secrets
+type: Opaque
+stringData:
+  DB_PASSWORD: "changeme-inject-via-CI-or-sealed-secrets"
+  JWT_SECRET: "changeme-min-32-bytes-inject-via-CI-or-sealed-secrets"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: taskflow-config
+data:
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_NAME: taskmgmt
+  DB_USER: taskmgmt
+  KAFKA_BOOTSTRAP: kafka:9092
+  SPRING_DATA_REDIS_HOST: redis
+  SPRING_CACHE_TYPE: redis
+
+# ---------------------------------------------------------
+# Postgres (single-node, PVC-backed — see note above)
+# ---------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15
+          ports: [{ containerPort: 5432 }]
+          env:
+            - { name: POSTGRES_DB, valueFrom: { configMapKeyRef: { name: taskflow-config, key: DB_NAME } } }
+            - { name: POSTGRES_USER, valueFrom: { configMapKeyRef: { name: taskflow-config, key: DB_USER } } }
+            - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: taskflow-secrets, key: DB_PASSWORD } } }
+          volumeMounts:
+            - { name: pgdata, mountPath: /var/lib/postgresql/data }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "$(POSTGRES_USER)"] }
+            initialDelaySeconds: 5
+  volumeClaimTemplates:
+    - metadata: { name: pgdata }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: 10Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: { app: postgres }
+  ports: [{ port: 5432, targetPort: 5432 }]
+
+# ---------------------------------------------------------
+# Redis (distributed cache shared by all java-backend pods)
+# ---------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: redis }
+  template:
+    metadata:
+      labels: { app: redis }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7
+          ports: [{ containerPort: 6379 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector: { app: redis }
+  ports: [{ port: 6379, targetPort: 6379 }]
+
+# ---------------------------------------------------------
+# Kafka (single-node KRaft broker — demo-scale only, see note above)
+# ---------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+spec:
+  serviceName: kafka
+  replicas: 1
+  selector:
+    matchLabels: { app: kafka }
+  template:
+    metadata:
+      labels: { app: kafka }
+    spec:
+      containers:
+        - name: kafka
+          image: bitnamilegacy/kafka:3.6
+          ports: [{ containerPort: 9092 }]
+          env:
+            - { name: KAFKA_CFG_NODE_ID, value: "0" }
+            - { name: KAFKA_CFG_PROCESS_ROLES, value: "controller,broker" }
+            - { name: KAFKA_CFG_LISTENERS, value: "PLAINTEXT://:9092,CONTROLLER://:9093" }
+            - { name: KAFKA_CFG_ADVERTISED_LISTENERS, value: "PLAINTEXT://kafka:9092" }
+            - { name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP, value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT" }
+            - { name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS, value: "0@kafka-0.kafka:9093" }
+            - { name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES, value: "CONTROLLER" }
+            - { name: ALLOW_PLAINTEXT_LISTENER, value: "yes" }
+          volumeMounts:
+            - { name: kafkadata, mountPath: /bitnami/kafka }
+  volumeClaimTemplates:
+    - metadata: { name: kafkadata }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: 10Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+spec:
+  selector: { app: kafka }
+  ports: [{ port: 9092, targetPort: 9092 }]
+
+# ---------------------------------------------------------
+# Java backend
+# ---------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: java-backend
+spec:
+  replicas: 3
+  strategy:
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels: { app: java-backend }
+  template:
+    metadata:
+      labels: { app: java-backend }
+    spec:
+      containers:
+        - name: java-backend
+          image: registry.example.com/taskmgmt/java-backend:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: taskflow-config }
+            - secretRef: { name: taskflow-secrets }
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 8080 }
+            initialDelaySeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 8080 }
+            initialDelaySeconds: 20
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: java-backend
+spec:
+  selector: { app: java-backend }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: java-backend-hpa
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: java-backend }
+  minReplicas: 3
+  maxReplicas: 50
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
+
+# ---------------------------------------------------------
+# Python AI service
+# ---------------------------------------------------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-ai-service
+spec:
+  replicas: 3
+  strategy:
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels: { app: python-ai-service }
+  template:
+    metadata:
+      labels: { app: python-ai-service }
+    spec:
+      containers:
+        - name: python-ai-service
+          image: registry.example.com/taskmgmt/python-ai-service:latest
+          ports: [{ containerPort: 8000 }]
+          envFrom:
+            - configMapRef: { name: taskflow-config }
+            - secretRef: { name: taskflow-secrets }
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: python-ai-service
+spec:
+  selector: { app: python-ai-service }
+  ports: [{ port: 8000, targetPort: 8000 }]
+---
+# Scaled on Kafka consumer lag (via KEDA ScaledObject) rather than CPU,
+# since the workload is I/O/queue-bound, not CPU-bound (Requirement 10).
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: python-ai-service-scaledobject
+spec:
+  scaleTargetRef: { name: python-ai-service }
+  minReplicaCount: 3
+  maxReplicaCount: 30
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka:9092
+        consumerGroup: ai-priority-service
+        topic: task.created
+        lagThreshold: "50"

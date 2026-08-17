@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TaskFlow — Task Management</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ===================== LOGIN VIEW ===================== -->
+  <section id="loginView" class="auth-screen">
+    <div class="auth-card">
+      <div class="brand">
+        <span class="brand-mark">TF</span>
+        <span class="brand-name">TaskFlow</span>
+      </div>
+      <p class="auth-sub">Real-time distributed task management</p>
+
+      <form id="loginForm" class="auth-form">
+        <label>Email
+          <input type="email" id="loginEmail" value="demo@taskflow.dev" required>
+        </label>
+        <label>Password
+          <input type="password" id="loginPassword" value="demo1234" required>
+        </label>
+        <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+      </form>
+
+      <div class="auth-config">
+        <label>API base URL
+          <input type="text" id="apiBaseUrl" value="http://localhost:8080/api/v1">
+        </label>
+      </div>
+      <p class="auth-note" id="authNote"></p>
+    </div>
+  </section>
+
+  <!-- ===================== APP VIEW ===================== -->
+  <section id="appView" class="app-shell hidden">
+
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">TF</span>
+        <span class="brand-name">TaskFlow</span>
+      </div>
+
+      <nav class="side-nav">
+        <button class="side-link active" data-filter="ALL">All tasks</button>
+        <button class="side-link" data-filter="OPEN">Open</button>
+        <button class="side-link" data-filter="IN_PROGRESS">In progress</button>
+        <button class="side-link" data-filter="DONE">Done</button>
+      </nav>
+
+      <div class="side-footer">
+        <div class="user-chip">
+          <span class="avatar" id="userAvatar">U</span>
+          <span class="user-email" id="userEmail">—</span>
+        </div>
+        <button class="btn btn-ghost btn-block" id="logoutBtn">Sign out</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1>Tasks</h1>
+          <p class="muted" id="taskCountLabel">0 tasks</p>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-secondary" id="claimBtn">Claim next open task</button>
+          <button class="btn btn-primary" id="newTaskBtn">+ New task</button>
+        </div>
+      </header>
+
+      <div class="status-strip" id="statusStrip"></div>
+
+      <div class="task-grid" id="taskGrid"></div>
+      <div class="empty-state hidden" id="emptyState">
+        <p>No tasks yet.</p>
+        <p class="muted">Create one to see the Python AI service predict its priority in real time.</p>
+      </div>
+    </main>
+  </section>
+
+  <!-- ===================== NEW TASK MODAL ===================== -->
+  <div id="taskModal" class="modal-backdrop hidden">
+    <div class="modal">
+      <h2>New task</h2>
+      <form id="taskForm">
+        <label>Title
+          <input type="text" id="taskTitle" required placeholder="e.g. Fix login bug on Safari">
+        </label>
+        <label>Description
+          <textarea id="taskDescription" rows="3" placeholder="Add context for the assignee and the priority model"></textarea>
+        </label>
+        <label>Due date
+          <input type="datetime-local" id="taskDueDate">
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" id="cancelTaskBtn">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create task</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

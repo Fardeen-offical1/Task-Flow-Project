@@ -1,0 +1,91 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: task-management-backend
+
+  datasource:
+    # DB_NAME/DB_USER/DB_PASSWORD defaults match deployment/docker-compose.yml
+    # and README.md's manual `createdb taskmgmt` instructions — previously
+    # these defaulted to "taskflow" here while every other file in the repo
+    # (compose, README, k8s) used "taskmgmt", so running the app without an
+    # explicit env override pointed at a database that doesn't exist.
+    url: jdbc:postgresql://${DB_HOST:postgres}:${DB_PORT:5432}/${DB_NAME:taskmgmt}?stringtype=unspecified
+    username: ${DB_USER:taskmgmt}
+    password: ${DB_PASSWORD:taskmgmt_dev_only}
+    hikari:
+      maximum-pool-size: 20      # bounded pool so 10k+ concurrent users queue, not exhaust Postgres
+      # Session-level safety net for docs/03-Database-Schema-and-Design.md §4.2:
+      # a stuck/long-held lock fails fast and gets retried instead of
+      # blocking every other transaction indefinitely. Was documented
+      # as already configured but nothing actually set it until now.
+      connection-init-sql: "SET lock_timeout = '5s'; SET statement_timeout = '15s'"
+
+  jpa:
+    hibernate:
+      # Schema is owned by database/01_schema.sql (applied via
+      # deployment/init/ on container startup, or manually per
+      # README.md). No Flyway/Liquibase is wired into this build —
+      # earlier the deployment guide told readers to run
+      # `mvn flyway:migrate`, but there was no Flyway dependency or
+      # migration folder for that command to run against. Until a
+      # migration tool is actually added, docs/05-Deployment-Guide.md
+      # documents applying database/01_schema.sql directly instead.
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 20
+
+  cache:
+    type: redis
+    # TTL is set in com.taskmgmt.config.RedisCacheConfig (JSON serializer bean) —
+    # a user-supplied RedisCacheConfiguration bean bypasses this property block,
+    # so it's not read anymore. Left here only as documentation of the value.
+    redis:
+      time-to-live: 60000ms   # see RedisCacheConfig for the value actually in effect
+
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:redis}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      timeout: 2000ms
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:kafka:9092}
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+
+app:
+  jwt:
+    # Local HMAC secret for signing/verifying tokens — this deliverable's
+    # architecture has no separate auth microservice, so the Java backend
+    # issues its own tokens (see AuthController) instead of depending on
+    # external OIDC discovery at startup. Override in production via env var.
+    secret: ${JWT_SECRET:dev-only-secret-change-me-please-min-32-bytes-long}
+    expiry-minutes: ${JWT_EXPIRY_MINUTES:60}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  # Micrometer only tracks count/sum/max for http.server.requests by
+  # default — no histogram buckets, so Prometheus has nothing to feed
+  # histogram_quantile() with. This is what the Grafana dashboard's
+  # "Java backend p99 latency" panel needs to stop showing "No data".
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+
+logging:
+  level:
+    com.taskmgmt: INFO

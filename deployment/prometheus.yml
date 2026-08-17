@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "java-backend"
+    metrics_path: "/actuator/prometheus"
+    static_configs:
+      - targets: ["java-backend:8080"]
+
+  # Previously missing entirely — the Python AI service had no scrape
+  # target, so its throughput/DLQ/latency were invisible in Grafana even
+  # though the deployment guide's monitoring table claimed otherwise.
+  - job_name: "python-ai-service"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["python-ai-service:8000"]
+
+  # Kafka consumer-lag monitoring (used by the KEDA ScaledObject and by
+  # the on-call alert described in docs/05-Deployment-Guide.md) requires
+  # an exporter — kafka-exporter is added as a service in docker-compose.
+  - job_name: "kafka-exporter"
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
